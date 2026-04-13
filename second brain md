@@ -1,0 +1,164 @@
+# Second Brain - Implementation Walkthrough
+
+## Summary
+
+Built a **fully offline, local-first personal assistant** Android app with a **chat-style interface**, **rule-based NLP parser**, **Room database**, **alarm-based reminders**, **daily idea resurfacing**, and a **placeholder AI module** for future on-device LLM integration.
+
+**23 Kotlin source files** created across 7 packages, plus unit tests, resources, and Gradle configuration.
+
+---
+
+## Architecture
+
+```mermaid
+graph TB
+    subgraph UI["ui/ (Jetpack Compose)"]
+        MA[MainActivity] --> CS[ChatScreen]
+        CS --> CV[ChatViewModel]
+    end
+
+    subgraph Domain["domain/ (Use Cases)"]
+        CV --> PU[ProcessUserInputUseCase]
+    end
+
+    subgraph Parser["parser/ (NLP)"]
+        PU --> RBP[RuleBasedParser]
+    end
+
+    subgraph AI["ai/ (Optional)"]
+        PU -.-> LLM["LocalLlmEngine (placeholder)"]
+    end
+
+    subgraph Data["data/ (Room)"]
+        PU --> MR[MemoryRepository]
+        MR --> MD[MemoryDao]
+        MD --> DB[(SQLite DB)]
+    end
+
+    subgraph Scheduler["scheduler/ (Background)"]
+        PU --> AS[AlarmScheduler]
+        AS --> RR[ReminderReceiver]
+        BR[BootReceiver] --> AS
+        IRW[IdeaResurfacingWorker] --> MR
+    end
+```
+
+---
+
+## Files Created
+
+### Foundation
+| File | Purpose |
+|------|---------|
+| [settings.gradle.kts](file:///d:/second_brain/settings.gradle.kts) | Project renamed to "Second Brain" |
+| [build.gradle.kts](file:///d:/second_brain/build.gradle.kts) | Added KSP plugin |
+| [app/build.gradle.kts](file:///d:/second_brain/app/build.gradle.kts) | Room, WorkManager, Gson, Nav, Icons deps |
+| [libs.versions.toml](file:///d:/second_brain/gradle/libs.versions.toml) | Version catalog with all new deps |
+| [AndroidManifest.xml](file:///d:/second_brain/app/src/main/AndroidManifest.xml) | Permissions + receivers |
+| [strings.xml](file:///d:/second_brain/app/src/main/res/values/strings.xml) | App name = "Second Brain" |
+| [ic_notification.xml](file:///d:/second_brain/app/src/main/res/drawable/ic_notification.xml) | Notification icon vector |
+
+---
+
+### Domain Layer
+| File | Purpose |
+|------|---------|
+| [MemoryType.kt](file:///d:/second_brain/app/src/main/java/in/karthiknp/secondbrain/domain/model/MemoryType.kt) | `IDEA`, `TASK`, `EVENT` enum |
+| [ParsedInput.kt](file:///d:/second_brain/app/src/main/java/in/karthiknp/secondbrain/domain/model/ParsedInput.kt) | Parser output model with confidence |
+| [ProcessUserInputUseCase.kt](file:///d:/second_brain/app/src/main/java/in/karthiknp/secondbrain/domain/usecase/ProcessUserInputUseCase.kt) | Full input pipeline orchestrator |
+
+---
+
+### Data Layer
+| File | Purpose |
+|------|---------|
+| [MemoryEntity.kt](file:///d:/second_brain/app/src/main/java/in/karthiknp/secondbrain/data/model/MemoryEntity.kt) | Room entity (id, type, content, datetime, metadata, isCompleted, isRecurring) |
+| [MemoryDao.kt](file:///d:/second_brain/app/src/main/java/in/karthiknp/secondbrain/data/local/MemoryDao.kt) | 10+ queries: CRUD, filter, search, random, schedulable |
+| [Converters.kt](file:///d:/second_brain/app/src/main/java/in/karthiknp/secondbrain/data/local/Converters.kt) | MemoryType enum ↔ String conversion |
+| [AppDatabase.kt](file:///d:/second_brain/app/src/main/java/in/karthiknp/secondbrain/data/local/AppDatabase.kt) | Room DB singleton |
+| [MemoryRepository.kt](file:///d:/second_brain/app/src/main/java/in/karthiknp/secondbrain/data/repository/MemoryRepository.kt) | Clean API wrapping DAO |
+
+---
+
+### Parser
+| File | Purpose |
+|------|---------|
+| [RuleBasedParser.kt](file:///d:/second_brain/app/src/main/java/in/karthiknp/secondbrain/parser/RuleBasedParser.kt) | **Core NLP engine**: 6 regex patterns, keyword fallback, date/time extraction, query intent detection |
+
+**Supported patterns:**
+- `"Remind me to X at Y"` → TASK with datetime
+- `"Todo: X"` / `"Task: X"` / `"Need to X"` → TASK
+- `"Name birthday Month Day"` → EVENT (recurring)
+- `"Birthday of Name on Date"` → EVENT
+- `"Schedule: X at Y"` → EVENT
+- `"Idea: X"` / `"Note: X"` → IDEA
+- Keyword fallback for 20+ task and 14+ event keywords
+- Query detection: `"Show my ideas"`, `"Upcoming birthdays"`, etc.
+
+---
+
+### Scheduler
+| File | Purpose |
+|------|---------|
+| [AlarmScheduler.kt](file:///d:/second_brain/app/src/main/java/in/karthiknp/secondbrain/scheduler/AlarmScheduler.kt) | AlarmManager for exact-time reminders, handles recurring events |
+| [ReminderReceiver.kt](file:///d:/second_brain/app/src/main/java/in/karthiknp/secondbrain/scheduler/ReminderReceiver.kt) | BroadcastReceiver → notification |
+| [BootReceiver.kt](file:///d:/second_brain/app/src/main/java/in/karthiknp/secondbrain/scheduler/BootReceiver.kt) | Reschedules all alarms after reboot |
+| [IdeaResurfacingWorker.kt](file:///d:/second_brain/app/src/main/java/in/karthiknp/secondbrain/scheduler/IdeaResurfacingWorker.kt) | Daily WorkManager job → "Remember this idea?" notification |
+| [NotificationHelper.kt](file:///d:/second_brain/app/src/main/java/in/karthiknp/secondbrain/scheduler/NotificationHelper.kt) | Notification channel setup |
+| [SecondBrainApp.kt](file:///d:/second_brain/app/src/main/java/in/karthiknp/secondbrain/SecondBrainApp.kt) | Application class (init channels + worker) |
+
+---
+
+### UI Layer
+| File | Purpose |
+|------|---------|
+| [Color.kt](file:///d:/second_brain/app/src/main/java/in/karthiknp/secondbrain/ui/theme/Color.kt) | Premium dark palette, chat bubble colors, memory type colors |
+| [Type.kt](file:///d:/second_brain/app/src/main/java/in/karthiknp/secondbrain/ui/theme/Type.kt) | Full typography scale |
+| [Theme.kt](file:///d:/second_brain/app/src/main/java/in/karthiknp/secondbrain/ui/theme/Theme.kt) | SecondBrainTheme with immersive system bars |
+| [ChatMessage.kt](file:///d:/second_brain/app/src/main/java/in/karthiknp/secondbrain/ui/chat/ChatMessage.kt) | UI message model |
+| [ChatViewModel.kt](file:///d:/second_brain/app/src/main/java/in/karthiknp/secondbrain/ui/chat/ChatViewModel.kt) | State management, input processing, query results |
+| [ChatScreen.kt](file:///d:/second_brain/app/src/main/java/in/karthiknp/secondbrain/ui/chat/ChatScreen.kt) | Full chat UI: TopBar, bubbles, typing indicator, input bar |
+| [MainActivity.kt](file:///d:/second_brain/app/src/main/java/in/karthiknp/secondbrain/MainActivity.kt) | Activity entry point |
+
+---
+
+### AI (Placeholder)
+| File | Purpose |
+|------|---------|
+| [LocalLlmEngine.kt](file:///d:/second_brain/app/src/main/java/in/karthiknp/secondbrain/ai/LocalLlmEngine.kt) | llama.cpp integration guide + placeholder methods |
+
+---
+
+### Tests
+| File | Purpose |
+|------|---------|
+| [RuleBasedParserTest.kt](file:///d:/second_brain/app/src/test/java/in/karthiknp/secondbrain/parser/RuleBasedParserTest.kt) | 18 JUnit tests for parser |
+
+---
+
+## How to Build & Run
+
+1. Open `d:\second_brain` in Android Studio
+2. **Sync Gradle** (File → Sync Project with Gradle Files)
+3. Wait for the sync to complete (first time may take a few minutes to download deps)
+4. Connect a device or start an emulator (API 26+)
+5. Click **Run ▶**
+
+## Running Tests
+
+In Android Studio terminal:
+```
+./gradlew test
+```
+Or right-click `RuleBasedParserTest.kt` → Run
+
+---
+
+## Next Steps (Enhancement Opportunities)
+
+1. **Local LLM**: Follow the integration guide in `LocalLlmEngine.kt` to add Qwen/LLaMA
+2. **Search screen**: Add a dedicated screen with filters and full-text search
+3. **Task completion**: Add swipe-to-complete for tasks in a task list view
+4. **Export/Import**: JSON backup and restore
+5. **Widgets**: Android home screen widget showing pending tasks
+6. **Theming**: Add light/dark toggle in settings
